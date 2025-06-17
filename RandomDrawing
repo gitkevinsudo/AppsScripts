@@ -1,0 +1,40 @@
+function runWeightedRaffle() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+
+  let pool = [];
+
+  data.forEach(([name, entries]) => {
+    for (let i = 0; i < entries; i++) {
+      pool.push(name);
+    }
+  });
+
+  if (pool.length === 0) {
+    Logger.log("No participants in the raffle.");
+    return;
+  }
+
+  const winner = pool[Math.floor(Math.random() * pool.length)];
+
+  // --------- DISCORD WEBHOOK SETTINGS ---------
+  const webhookUrl = ' '; // <-- Replace with your webhook
+  const message = {
+    username: "🎟️ Raffle Bot",
+    avatar_url: " ", // <-- Please replace with an image
+    content: `🎉 **The Checking In raffle winner is: ${winner}!** 🥳\nThanks to everyone who checked in this quarter!`
+  };
+
+  const options = {
+    method: "POST",
+    contentType: "application/json",
+    payload: JSON.stringify(message)
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(webhookUrl, options);
+    Logger.log("Posted to Discord successfully.");
+  } catch (e) {
+    Logger.log("Error posting to Discord: " + e);
+  }
+}
