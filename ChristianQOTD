@@ -1,0 +1,74 @@
+function postQuestionToDiscordChristian() {
+  // --- Configuration ---
+  const SHEET_NAME = 'Questions';
+  const QUESTION_COLUMN = 1; // Column A
+  const POSTED_COLUMN = 2;   // Column B
+  const DONE_COLUMN = 3;     // Column C
+  const WEBHOOK_URL = 'ADD YOUR WEBHOOK';
+  const SCRIPT_PROPERTY_KEY = 'lastDiscordPostDate';
+  const LOG_FILE_NAME = 'DiscordPostLog.txt';
+  const EMBED_COLOR_PURPLE = 0x800080;
+  // --- End Configuration ---
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
+  const lastRow = sheet.getLastRow();
+  const today = new Date().toDateString();
+  const scriptProperties = PropertiesService.getScriptProperties();
+
+  if (scriptProperties.getProperty(SCRIPT_PROPERTY_KEY) === today) {
+    Logger.log('Post already made today. Skipping.');
+    return;
+  }
+
+  const questions = sheet.getRange(2, QUESTION_COLUMN, lastRow - 1).getValues();
+  const postedFlags = sheet.getRange(2, POSTED_COLUMN, lastRow - 1).getValues();
+
+  let questionRow = -1;
+  let question = '';
+
+  for (let i = 0; i < questions.length; i++) {
+    if (postedFlags[i][0] !== 'Yes') {
+      questionRow = i + 2; // Offset for 1-based row index + header
+      question = questions[i][0];
+      break;
+    }
+  }
+
+  if (!question) {
+    Logger.log('No unposted questions found.');
+    return;
+  }
+
+  const payload = JSON.stringify({
+    embeds: [
+      {
+        title: ":cross:\u00A0\u00A0\u00A0Daily Question!",
+        description: question,
+        color: EMBED_COLOR_PURPLE,
+        footer: { text: "Thank you for being you" },
+        timestamp: new Date().toISOString()
+      }
+    ]
+  });
+
+  try {
+    UrlFetchApp.fetch(WEBHOOK_URL, {
+      method: 'POST',
+      contentType: 'application/json',
+      payload: payload
+    });
+
+    sheet.getRange(questionRow, POSTED_COLUMN).setValue('Yes');
+    sheet.getRange(questionRow, DONE_COLUMN).setValue('Done');
+    scriptProperties.setProperty(SCRIPT_PROPERTY_KEY, today);
+    Logger.log('Posted to Discord and updated sheet.');
+
+    // Log question to file
+    const files = DriveApp.getFilesByName(LOG_FILE_NAME);
+    const file = files.hasNext() ? files.next() : DriveApp.createFile(LOG_FILE_NAME, '', MimeType.PLAIN_TEXT);
+    file.setContent(question);
+    Logger.log(`Logged question to file: ${file.getUrl()}`);
+  } catch (error) {
+    Logger.log('Error posting to webhook or updating file: ' + error);
+  }
+}
