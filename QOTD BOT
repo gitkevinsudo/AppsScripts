@@ -1,0 +1,106 @@
+function postQuestionToDiscord() {
+  // ====== Configuration ======
+  const SHEET_NAME = 'Questions';
+  const QUESTION_COLUMN = 1;
+  const POSTED_COLUMN = 2;
+  const WEBHOOK_URL = 'DISCORD CHANNEL TO PUBLISH WEBHOOK';
+  const ADMIN_ALERT_WEBHOOK = 'ADMIN ALERT WEBHOOK'; // <--- secondary alert webhook
+
+  const SCRIPT_PROPERTY_KEY = 'lastDiscordPostDate';
+  const LAST_ALERTED_KEY = 'lastQuestionsLeftAlert';
+  const LOG_FILE_NAME = 'DiscordPostLog.txt';
+
+  const tz = Session.getScriptTimeZone() || 'America/New_York';
+  const now = new Date();
+  const todayISO = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+
+  // Prevent concurrent runs
+  const lock = LockService.getScriptLock();
+  try {
+    lock.tryLock(20 * 1000);
+  } catch (e) {
+    Logger.log('Could not acquire lock; exiting.');
+    return;
+  }
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(SHEET_NAME);
+    if (!sheet) {
+      alertToWebhook(`❌ Error: Sheet "${SHEET_NAME}" not found.`);
+      return;
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      alertToWebhook(`⚠️ The sheet "${SHEET_NAME}" has no questions under the header.`);
+      maybeRefillWhenOut(sheet);
+      return;
+    }
+
+    const props = PropertiesService.getScriptProperties();
+    const lastPostDate = props.getProperty(SCRIPT_PROPERTY_KEY);
+    if (lastPostDate === todayISO) {
+      Logger.log('Already posted today; exiting.');
+      return;
+    }
+
+    const maxCols = Math.max(QUESTION_COLUMN, POSTED_COLUMN);
+    const range = sheet.getRange(2, 1, lastRow - 1, maxCols);
+    const data = range.getValues();
+
+    // Find first valid unposted question
+    let rowIndex = -1;
+    let question = '';
+    for (let i = 0; i < data.length; i++) {
+      const qRaw = data[i][QUESTION_COLUMN - 1];
+      const q = String(qRaw == null ? '' : qRaw).trim();
+      const posted = String(data[i][POSTED_COLUMN - 1] || '').trim().toLowerCase();
+
+      if (q && posted !== 'yes') {
+        rowIndex = i;
+        question = q;
+        break;
+      }
+    }
+
+    // If no question left, refill 25 from top 100 and notify
+    if (!question) {
+      const appended = appendRandomFromTop100(sheet, QUESTION_COLUMN, POSTED_COLUMN);
+      if (appended > 0) {
+        alertToWebhook(`🪄 Out of questions! Added ${appended} new randomized ones from the top 100. Stock reset to 25.`);
+      } else {
+        alertToWebhook(`🚨 No unposted questions left and unable to refill from the top 100 in "${SHEET_NAME}".`);
+      }
+      return;
+    }
+
+    // Post question to main webhook
+    const payload = {
+      allowed_mentions: { parse: [] },
+      embeds: [{
+        title: '📢 Daily Question!',
+        description: question.length > 4096 ? question.slice(0, 4093) + '...' : question,
+        color: 0xFF0000,
+        footer: { text: 'Version 1.0.0' },
+        timestamp: new Date().toISOString()
+      }]
+    };
+    const resp = postToDiscordWithRetry(WEBHOOK_URL, payload);
+    Logger.log(`Discord response code: ${resp.getResponseCode()}`);
+
+    // Mark posted row
+    const sheetRow = rowIndex + 2;
+    sheet.getRange(sheetRow, POSTED_COLUMN).setValue('Yes');
+
+    props.setProperty(SCRIPT_PROPERTY_KEY, todayISO);
+
+    appendToDriveLog(LOG_FILE_NAME, [
+      `Time: ${Utilities.formatDate(now, tz, 'yyyy-MM-dd HH:mm:ss')}`,
+      `Row: ${sheetRow}`,
+      `Question: ${question}`,
+      '---'
+    ].join('\n'));
+
+    // Count remaining and check thresholds
+    const remaining = co
