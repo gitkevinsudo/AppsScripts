@@ -1,74 +1,271 @@
-function postQuestionToDiscordChristian() {
-  // --- Configuration ---
+function postQuestionToDiscord() {
+  // ====== Configuration ======
   const SHEET_NAME = 'Questions';
-  const QUESTION_COLUMN = 1; // Column A
-  const POSTED_COLUMN = 2;   // Column B
-  const DONE_COLUMN = 3;     // Column C
-  const WEBHOOK_URL = 'ADD YOUR WEBHOOK';
+  const QUESTION_COLUMN = 1;            // Column A: Question
+  const POSTED_COLUMN = 2;              // Column B: "Yes" once posted
+
+  // --- Webhooks ---
+  const WEBHOOK_URL = 'CHANNEL POST WEBHOOK';
+  const ADMIN_ALERT_WEBHOOK = 'ADMIN WEBHOOK';
+
+  // --- Bot identity (main channel post) ---
+  const BOT_USERNAME = '✝️ Christian QOTD Bot';
+  const BOT_AVATAR_URL = 'https://example.com/christian-qotd-bot.png'; // public image URL
+
+  // --- Admin alert identity (optional) ---
+  const ADMIN_BOT_USERNAME = '🛎️ CQOTD Alerts';
+  const ADMIN_BOT_AVATAR_URL = '';
+
+  // --- Metadata & props ---
   const SCRIPT_PROPERTY_KEY = 'lastDiscordPostDate';
+  const LAST_ALERTED_KEY = 'lastQuestionsLeftAlert';
   const LOG_FILE_NAME = 'DiscordPostLog.txt';
-  const EMBED_COLOR_PURPLE = 0x800080;
-  // --- End Configuration ---
 
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME);
-  const lastRow = sheet.getLastRow();
-  const today = new Date().toDateString();
-  const scriptProperties = PropertiesService.getScriptProperties();
+  // --- Formatting helpers ---
+  const EMBED_COLOR = 0x6A5ACD; // soft violet
+  const EMBED_TITLE = '📖 Christian Question of the Day';
+  const FOOTER_TEXT = '✝️ Christian QOTD • v1.1.0';
 
-  if (scriptProperties.getProperty(SCRIPT_PROPERTY_KEY) === today) {
-    Logger.log('Post already made today. Skipping.');
+  const tz = Session.getScriptTimeZone() || 'America/New_York';
+  const now = new Date();
+  const todayISO = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+
+  // Prevent concurrent runs
+  const lock = LockService.getScriptLock();
+  try {
+    lock.tryLock(20 * 1000);
+  } catch (e) {
+    Logger.log('Could not acquire lock; exiting.');
     return;
   }
 
-  const questions = sheet.getRange(2, QUESTION_COLUMN, lastRow - 1).getValues();
-  const postedFlags = sheet.getRange(2, POSTED_COLUMN, lastRow - 1).getValues();
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(SHEET_NAME);
+    if (!sheet) {
+      alertToWebhook(`❌ Error: Sheet "${SHEET_NAME}" not found for Christian QOTD.`);
+      return;
+    }
 
-  let questionRow = -1;
-  let question = '';
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) {
+      alertToWebhook(`⚠️ "${SHEET_NAME}" has no questions under the header for Christian QOTD.`);
+      maybeRefillWhenOut(sheet);
+      return;
+    }
 
-  for (let i = 0; i < questions.length; i++) {
-    if (postedFlags[i][0] !== 'Yes') {
-      questionRow = i + 2; // Offset for 1-based row index + header
-      question = questions[i][0];
-      break;
+    const props = PropertiesService.getScriptProperties();
+    const lastPostDate = props.getProperty(SCRIPT_PROPERTY_KEY);
+    if (lastPostDate === todayISO) {
+      Logger.log('Already posted today; exiting.');
+      return;
+    }
+
+    const maxCols = Math.max(QUESTION_COLUMN, POSTED_COLUMN);
+    const range = sheet.getRange(2, 1, lastRow - 1, maxCols);
+    const data = range.getValues();
+
+    // Find first valid unposted question (non-blank, not "yes")
+    let rowIndex = -1;
+    let question = '';
+
+    for (let i = 0; i < data.length; i++) {
+      const qRaw = data[i][QUESTION_COLUMN - 1];
+      const q = String(qRaw == null ? '' : qRaw).trim();
+      const posted = String(data[i][POSTED_COLUMN - 1] || '').trim().toLowerCase();
+
+      if (q && posted !== 'yes') {
+        rowIndex = i;
+        question = q;
+        break;
+      }
+    }
+
+    // If no question left, try refill and notify
+    if (!question) {
+      const appended = appendRandomFromTop100(sheet, QUESTION_COLUMN, POSTED_COLUMN);
+      if (appended > 0) {
+        alertToWebhook(`🪄 Out of questions! Added ${appended} new randomized ones from the top 100 for Christian QOTD (stock reset to 25).`);
+      } else {
+        alertToWebhook(`🚨 No unposted Christian QOTD entries left and unable to refill from the top 100 in "${SHEET_NAME}".`);
+      }
+      return;
+    }
+
+    // Build Christian QOTD embed
+    const fields = [{
+      name: '💬 Reflection',
+      value: 'Share your thoughts or Scripture that relates to this question!',
+      inline: false
+    }];
+
+    const embed = {
+      title: EMBED_TITLE,
+      description: truncate(question, 4096),
+      color: EMBED_COLOR,
+      footer: { text: FOOTER_TEXT },
+      timestamp: new Date().toISOString(),
+      fields
+    };
+
+    const payload = withIdentity({
+      allowed_mentions: { parse: [] },
+      embeds: [embed]
+    }, BOT_USERNAME, BOT_AVATAR_URL);
+
+    // Post to main webhook (with retry logic)
+    const resp = postToDiscordWithRetry(WEBHOOK_URL, payload);
+    Logger.log(`Discord response code: ${resp.getResponseCode()}`);
+
+    // Mark posted row
+    const sheetRow = rowIndex + 2;
+    sheet.getRange(sheetRow, POSTED_COLUMN).setValue('Yes');
+
+    props.setProperty(SCRIPT_PROPERTY_KEY, todayISO);
+
+    appendToDriveLog(LOG_FILE_NAME, [
+      `Time: ${Utilities.formatDate(now, tz, 'yyyy-MM-dd HH:mm:ss')}`,
+      `Row: ${sheetRow}`,
+      `Question: ${question}`,
+      '---'
+    ].join('\n'));
+
+    // Count remaining and check thresholds
+    const remaining = countRemainingQuestions(sheet, QUESTION_COLUMN, POSTED_COLUMN);
+    Logger.log(`Remaining unposted questions: ${remaining}`);
+
+    const thresholds = [25, 10, 1];
+    if (thresholds.includes(remaining)) {
+      const last = props.getProperty(LAST_ALERTED_KEY);
+      if (String(remaining) !== String(last)) {
+        alertToWebhook(`⚠️ Only ${remaining} Christian QOTD item${remaining === 1 ? '' : 's'} left in "${SHEET_NAME}".`);
+        props.setProperty(LAST_ALERTED_KEY, String(remaining));
+      }
+    }
+
+    // If out, refill automatically
+    if (remaining === 0) {
+      const appended = appendRandomFromTop100(sheet, QUESTION_COLUMN, POSTED_COLUMN);
+      if (appended > 0) {
+        alertToWebhook(`🪄 Stock reached 0 after posting. Added ${appended} randomized items from the top 100 for Christian QOTD!`);
+      }
+    }
+
+  } catch (e) {
+    alertToWebhook(`❌ Error posting Christian QOTD to Discord: ${e && e.stack ? e.stack : e}`);
+  } finally {
+    lock.releaseLock();
+  }
+
+  // ===== Helpers =====
+  function withIdentity(basePayload, username, avatarUrl) {
+    const p = Object.assign({}, basePayload);
+    if (username && username.trim()) p.username = username;
+    if (avatarUrl && avatarUrl.trim()) p.avatar_url = avatarUrl;
+    return p;
+  }
+
+  function alertToWebhook(message) {
+    try {
+      const payload = withIdentity({
+        content: message,
+        allowed_mentions: { parse: [] }
+      }, ADMIN_BOT_USERNAME, ADMIN_BOT_AVATAR_URL);
+
+      UrlFetchApp.fetch(ADMIN_ALERT_WEBHOOK, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+      Logger.log('Alert sent to secondary webhook.');
+    } catch (err) {
+      Logger.log('Failed to send alert webhook: ' + err);
     }
   }
 
-  if (!question) {
-    Logger.log('No unposted questions found.');
-    return;
-  }
-
-  const payload = JSON.stringify({
-    embeds: [
-      {
-        title: ":cross:\u00A0\u00A0\u00A0Daily Question!",
-        description: question,
-        color: EMBED_COLOR_PURPLE,
-        footer: { text: "Thank you for being you" },
-        timestamp: new Date().toISOString()
-      }
-    ]
-  });
-
-  try {
-    UrlFetchApp.fetch(WEBHOOK_URL, {
-      method: 'POST',
-      contentType: 'application/json',
-      payload: payload
+  function countRemainingQuestions(sheet, qCol, postedCol) {
+    const lr = sheet.getLastRow();
+    if (lr < 2) return 0;
+    const vals = sheet.getRange(2, 1, lr - 1, Math.max(qCol, postedCol)).getValues();
+    let cnt = 0;
+    vals.forEach(r => {
+      const q = String(r[qCol - 1] || '').trim();
+      const p = String(r[postedCol - 1] || '').trim().toLowerCase();
+      if (q && p !== 'yes') cnt++;
     });
-
-    sheet.getRange(questionRow, POSTED_COLUMN).setValue('Yes');
-    sheet.getRange(questionRow, DONE_COLUMN).setValue('Done');
-    scriptProperties.setProperty(SCRIPT_PROPERTY_KEY, today);
-    Logger.log('Posted to Discord and updated sheet.');
-
-    // Log question to file
-    const files = DriveApp.getFilesByName(LOG_FILE_NAME);
-    const file = files.hasNext() ? files.next() : DriveApp.createFile(LOG_FILE_NAME, '', MimeType.PLAIN_TEXT);
-    file.setContent(question);
-    Logger.log(`Logged question to file: ${file.getUrl()}`);
-  } catch (error) {
-    Logger.log('Error posting to webhook or updating file: ' + error);
+    return cnt;
   }
+
+  function appendRandomFromTop100(sheet, qCol, postedCol) {
+    const lr = sheet.getLastRow();
+    if (lr < 2) return 0;
+    const topCount = Math.min(100, lr - 1);
+    const bank = sheet.getRange(2, qCol, topCount, 1).getValues()
+      .map(r => String(r[0] || '').trim())
+      .filter(Boolean);
+    if (!bank.length) return 0;
+    shuffleInPlace(bank);
+    const add = bank.slice(0, Math.min(25, bank.length));
+    const cols = Math.max(qCol, postedCol);
+    const rows = add.map(q => {
+      const arr = new Array(cols).fill('');
+      arr[qCol - 1] = q;
+      return arr;
+    });
+    sheet.getRange(lr + 1, 1, rows.length, cols).setValues(rows);
+    Logger.log(`Appended ${rows.length} questions.`);
+    return rows.length;
+  }
+
+  function shuffleInPlace(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+  }
+
+  function postToDiscordWithRetry(url, json, max = 4) {
+    const opts = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(json),
+      muteHttpExceptions: true
+    };
+    let wait = 500;
+    for (let i = 0; i < max; i++) {
+      const res = UrlFetchApp.fetch(url, opts);
+      const code = res.getResponseCode();
+      if (code >= 200 && code < 300) return res;
+      if (code === 429 || (code >= 500 && code < 600)) {
+        Utilities.sleep(wait);
+        wait *= 2;
+        continue;
+      }
+      throw new Error(`Discord webhook failed: ${code}`);
+    }
+    throw new Error('Discord webhook failed after retries.');
+  }
+
+  function appendToDriveLog(name, text) {
+    let file;
+    const it = DriveApp.getFilesByName(name);
+    if (it.hasNext()) {
+      file = it.next();
+      file.setContent(file.getBlob().getDataAsString() + '\n' + text);
+    } else {
+      file = DriveApp.createFile(name, text, MimeType.PLAIN_TEXT);
+    }
+    Logger.log('Wrote log -> ' + file.getUrl());
+  }
+
+  function truncate(s, max) {
+    s = String(s == null ? '' : s);
+    if (s.length <= max) return s;
+    if (max <= 3) return s.slice(0, max);
+    return s.slice(0, max - 3) + '…';
+  }
+
+  // Optional placeholder for future auto-refill logic
+  function maybeRefillWhenOut(sheet) {}
 }
