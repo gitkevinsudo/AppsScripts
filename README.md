@@ -29,11 +29,7 @@ All scripts follow the same general setup process:
    - Tabs and columns vary per app (see each section below).
 2. **Add Script**
    - Open **Extensions → Apps Script** and paste the code.
-3. **Configure Settings tab**
-   - Always include:
-     | key | value |
-     |------|-------|
-     | DISCORD_WEBHOOK | *(your Discord webhook URL)* |
+   - Add your webhook
 4. **Deploy as a Web App** (if it has interactive links)
    - Execute as: **Me**
    - Access: **Anyone with the link**
