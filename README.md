@@ -30,12 +30,12 @@ All scripts follow the same general setup process:
 2. **Add Script**
    - Open **Extensions → Apps Script** and paste the code.
    - Add your webhook
-4. **Deploy as a Web App** (if it has interactive links)
+3. **Deploy as a Web App** (if it has interactive links)
    - Execute as: **Me**
    - Access: **Anyone with the link**
-5. **Add Triggers**
+4. **Add Triggers**
    - Set daily or weekly schedules as described in each section.
-6. **Authorize** when prompted.
+5. **Authorize** when prompted.
 
 ---
 
