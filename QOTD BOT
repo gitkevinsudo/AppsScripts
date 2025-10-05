@@ -3,8 +3,8 @@ function postQuestionToDiscord() {
   const SHEET_NAME = 'Questions';
   const QUESTION_COLUMN = 1;
   const POSTED_COLUMN = 2;
-  const WEBHOOK_URL = 'DISCORD CHANNEL TO PUBLISH WEBHOOK';
-  const ADMIN_ALERT_WEBHOOK = 'ADMIN ALERT WEBHOOK'; // <--- secondary alert webhook
+  const WEBHOOK_URL = 'CHANNEL POST WEBHOOK';
+  const ADMIN_ALERT_WEBHOOK = 'ADMIN WEBHOOK'; // <--- secondary alert webhook
 
   const SCRIPT_PROPERTY_KEY = 'lastDiscordPostDate';
   const LAST_ALERTED_KEY = 'lastQuestionsLeftAlert';
@@ -82,7 +82,7 @@ function postQuestionToDiscord() {
         title: '📢 Daily Question!',
         description: question.length > 4096 ? question.slice(0, 4093) + '...' : question,
         color: 0xFF0000,
-        footer: { text: 'Version 1.0.0' },
+        footer: { text: 'Version 1.0.1' },
         timestamp: new Date().toISOString()
       }]
     };
@@ -103,4 +103,123 @@ function postQuestionToDiscord() {
     ].join('\n'));
 
     // Count remaining and check thresholds
-    const remaining = co
+    const remaining = countRemainingQuestions(sheet, QUESTION_COLUMN, POSTED_COLUMN);
+    Logger.log(`Remaining unposted questions: ${remaining}`);
+
+    const thresholds = [25, 10, 1];
+    if (thresholds.includes(remaining)) {
+      const last = props.getProperty(LAST_ALERTED_KEY);
+      if (String(remaining) !== String(last)) {
+        alertToWebhook(`⚠️ Only ${remaining} question${remaining === 1 ? '' : 's'} left in "${SHEET_NAME}".`);
+        props.setProperty(LAST_ALERTED_KEY, String(remaining));
+      }
+    }
+
+    // If out, refill automatically
+    if (remaining === 0) {
+      const appended = appendRandomFromTop100(sheet, QUESTION_COLUMN, POSTED_COLUMN);
+      if (appended > 0) {
+        alertToWebhook(`🪄 Stock reached 0 after posting. Added ${appended} new randomized ones from the top 100!`);
+      }
+    }
+
+  } catch (e) {
+    alertToWebhook(`❌ Error posting to Discord: ${e && e.stack ? e.stack : e}`);
+  } finally {
+    lock.releaseLock();
+  }
+
+  // ===== Helpers =====
+  function alertToWebhook(message) {
+    try {
+      const payload = {
+        content: message,
+        allowed_mentions: { parse: [] }
+      };
+      UrlFetchApp.fetch(ADMIN_ALERT_WEBHOOK, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+      Logger.log('Alert sent to secondary webhook.');
+    } catch (err) {
+      Logger.log('Failed to send alert webhook: ' + err);
+    }
+  }
+
+  function countRemainingQuestions(sheet, qCol, postedCol) {
+    const lr = sheet.getLastRow();
+    if (lr < 2) return 0;
+    const vals = sheet.getRange(2, 1, lr - 1, Math.max(qCol, postedCol)).getValues();
+    let cnt = 0;
+    vals.forEach(r => {
+      const q = String(r[qCol - 1] || '').trim();
+      const p = String(r[postedCol - 1] || '').trim().toLowerCase();
+      if (q && p !== 'yes') cnt++;
+    });
+    return cnt;
+  }
+
+  function appendRandomFromTop100(sheet, qCol, postedCol) {
+    const lr = sheet.getLastRow();
+    if (lr < 2) return 0;
+    const topCount = Math.min(100, lr - 1);
+    const bank = sheet.getRange(2, qCol, topCount, 1).getValues()
+      .map(r => String(r[0] || '').trim())
+      .filter(Boolean);
+    if (!bank.length) return 0;
+    shuffleInPlace(bank);
+    const add = bank.slice(0, Math.min(25, bank.length));
+    const cols = Math.max(qCol, postedCol);
+    const rows = add.map(q => {
+      const arr = new Array(cols).fill('');
+      arr[qCol - 1] = q;
+      return arr;
+    });
+    sheet.getRange(lr + 1, 1, rows.length, cols).setValues(rows);
+    Logger.log(`Appended ${rows.length} questions.`);
+    return rows.length;
+  }
+
+  function shuffleInPlace(a) {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+  }
+
+  function postToDiscordWithRetry(url, json, max = 4) {
+    const opts = {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(json),
+      muteHttpExceptions: true
+    };
+    let wait = 500;
+    for (let i = 0; i < max; i++) {
+      const res = UrlFetchApp.fetch(url, opts);
+      const code = res.getResponseCode();
+      if (code >= 200 && code < 300) return res;
+      if (code === 429 || (code >= 500 && code < 600)) {
+        Utilities.sleep(wait);
+        wait *= 2;
+        continue;
+      }
+      throw new Error(`Discord webhook failed: ${code}`);
+    }
+    throw new Error('Discord webhook failed after retries.');
+  }
+
+  function appendToDriveLog(name, text) {
+    let file;
+    const it = DriveApp.getFilesByName(name);
+    if (it.hasNext()) {
+      file = it.next();
+      file.setContent(file.getBlob().getDataAsString() + '\n' + text);
+    } else {
+      file = DriveApp.createFile(name, text, MimeType.PLAIN_TEXT);
+    }
+    Logger.log('Wrote log -> ' + file.getUrl());
+  }
+}
