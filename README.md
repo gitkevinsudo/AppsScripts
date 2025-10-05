@@ -16,7 +16,7 @@ All scripts use the same core design:
 | [QOTD Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/QOTD%20BOT)| Posts a random daily question from a Google Sheet | ✅ Active |
 | [Bible QOTD Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/ChristianQOTD) | Posts a random Bible-related question or verse | ✅ Active |
 | [Random Drawing Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/RandomDrawing)| Runs weighted raffles for community check-ins | ✅ Active |
-| [Check-In Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/dailycheckin) | Tracks daily user check-ins and streaks | 🆕 v1.0.0 |
+| [Check-In Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/dailycheckin) | Tracks daily user check-ins and streaks | BETA |
 | (Coming Soon) Suggestion Box | Collects member feedback | ⏳ Planned |
 
 ---
