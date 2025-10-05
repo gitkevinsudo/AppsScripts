@@ -1,1 +1,161 @@
-TBD
+/*****************************************************
+ * Discord Suggestion Prompt (Apps Script)
+ * Version: v1.0.0
+ * - Posts a prompt to Discord via webhook
+ * - Includes a Google Form link for suggestions
+ * - Safe retry on rate limits / transient errors
+ *****************************************************/
+
+// ========= Configuration =========
+const CONFIG = {
+  // --- Discord webhook URL (REQUIRED) ---
+  DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/xxx/yyy', // <--- paste your webhook
+
+  // --- Google Form (REQUIRED) ---
+  FORM_URL: 'https://docs.google.com/forms/d/xxxxxxxxxxxxxxxxxxxxxxxxxxxx/viewform',
+
+  // --- Bot identity (optional) ---
+  BOT_USERNAME: '💡 Suggestion Bot',
+  BOT_AVATAR_URL: 'https://i.imgur.com/Z9a7y7Z.png', // any public image URL, or leave empty ''
+
+  // --- Message content (customize freely) ---
+  MESSAGE_TITLE: 'We want your suggestions!',
+  MESSAGE_BODY: 'Got an idea for streams, events, or community features? Drop it here:',
+  // Example tag everyone or a role (optional). Leave empty '' if not desired.
+  MENTION: '', // e.g. '@everyone' or '<@&ROLE_ID>'
+
+  // --- Retry behavior ---
+  MAX_RETRIES: 4,          // total attempts including the first
+  INITIAL_BACKOFF_MS: 800  // backoff base (exponential)
+};
+
+// ========= Public entry point =========
+/**
+ * Posts a suggestion prompt to Discord with the Google Form link.
+ * Run this directly from the Apps Script editor, or wire it to a trigger.
+ */
+function postSuggestionPromptToDiscord() {
+  require_(CONFIG.DISCORD_WEBHOOK_URL, 'CONFIG.DISCORD_WEBHOOK_URL');
+  require_(CONFIG.FORM_URL, 'CONFIG.FORM_URL');
+
+  const contentLines = [
+    CONFIG.MENTION && CONFIG.MENTION.trim() ? CONFIG.MENTION.trim() : null,
+    `**${CONFIG.MESSAGE_TITLE}**`,
+    CONFIG.MESSAGE_BODY,
+    `[Submit your suggestion here](${CONFIG.FORM_URL})`
+  ].filter(Boolean);
+
+  // You can use plain content OR add an embed. Using both is fine.
+  const payload = {
+    username: CONFIG.BOT_USERNAME || undefined,
+    avatar_url: CONFIG.BOT_AVATAR_URL || undefined,
+    content: contentLines.join('\n'),
+    // Optional embed for a cleaner look
+    embeds: [
+      {
+        title: 'Suggestion Form',
+        url: CONFIG.FORM_URL,
+        description: 'Click to open the Google Form and share your ideas.',
+        // color is decimal (e.g., 0x5865F2 = 5793266). Omit or change as you like.
+        color: 5793266
+      }
+    ]
+  };
+
+  const res = discordPostWithRetry_(CONFIG.DISCORD_WEBHOOK_URL, payload, {
+    maxRetries: CONFIG.MAX_RETRIES,
+    initialBackoffMs: CONFIG.INITIAL_BACKOFF_MS
+  });
+
+  Logger.log(`Posted suggestion prompt. HTTP ${res.code}: ${res.text}`);
+}
+
+// ========= (Optional) Time-based trigger helper =========
+/**
+ * Creates a daily trigger to post at a set local time.
+ * Example: scheduleDailyPost_(10, 15) -> 10:15 local time every day.
+ */
+function scheduleDailyPost_(hour24, minute) {
+  // Remove existing triggers for this function to avoid duplicates
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'postSuggestionPromptToDiscord')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger('postSuggestionPromptToDiscord')
+    .timeBased()
+    .atHour(hour24)
+    .nearMinute(minute)
+    .everyDays(1)
+    .create();
+
+  Logger.log(`Scheduled daily postSuggestionPromptToDiscord at ${hour24}:${String(minute).padStart(2, '0')} local time.`);
+}
+
+// ========= Core HTTP with retry =========
+function discordPostWithRetry_(webhookUrl, payloadObj, opts) {
+  const maxRetries = Math.max(1, Number(opts?.maxRetries ?? 3));
+  const baseDelay = Math.max(200, Number(opts?.initialBackoffMs ?? 500));
+
+  let attempt = 0;
+  let lastErr = null;
+
+  while (attempt < maxRetries) {
+    attempt++;
+    try {
+      const resp = UrlFetchApp.fetch(webhookUrl, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payloadObj),
+        muteHttpExceptions: true
+      });
+
+      const code = resp.getResponseCode();
+      const text = resp.getContentText();
+
+      // 2xx success
+      if (code >= 200 && code < 300) {
+        return { code, text };
+      }
+
+      // 429 rate limited: respect 'Retry-After' if present
+      if (code === 429) {
+        const headers = resp.getAllHeaders();
+        const retryAfterSec = Number(headers['Retry-After'] || headers['retry-after'] || 0);
+        const delayMs = retryAfterSec > 0 ? retryAfterSec * 1000 : backoffMs_(baseDelay, attempt);
+        Utilities.sleep(delayMs);
+        continue;
+      }
+
+      // 5xx transient server errors: backoff and retry
+      if (code >= 500 && code < 600) {
+        Utilities.sleep(backoffMs_(baseDelay, attempt));
+        continue;
+      }
+
+      // Other non-retryable errors -> throw
+      throw new Error(`Discord webhook error (HTTP ${code}): ${text}`);
+
+    } catch (err) {
+      lastErr = err;
+      // Network/unknown errors: backoff then retry
+      if (attempt < maxRetries) {
+        Utilities.sleep(backoffMs_(baseDelay, attempt));
+      }
+    }
+  }
+
+  throw new Error(`Failed to post to Discord after ${maxRetries} attempts. Last error: ${lastErr}`);
+}
+
+function backoffMs_(base, attempt) {
+  // Exponential backoff with jitter
+  const exp = Math.pow(2, attempt - 1);
+  const jitter = Math.floor(Math.random() * 250);
+  return base * exp + jitter;
+}
+
+function require_(val, name) {
+  if (!val || String(val).trim() === '') {
+    throw new Error(`Missing required config: ${name}`);
+  }
+}
