@@ -22,30 +22,20 @@ jobs:
       fail-fast: false
       matrix:
         language: [ "javascript-typescript" ]
-        build_mode: [ "autobuild" ]  # change to "manual" if you need to run your own build
+        build_mode: [ "none" ]      # <-- JS/TS must be "none"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build_mode }}
-          # queries: security-extended,security-and-quality
+          # Or read from .nvmrc: node-version-file: '.nvmrc'
+          node-version: '20'
 
-      # Only needed if you set build_mode: manual
-      - name: Build (manual mode)
-        if: ${{ matrix.build_mode == 'manual' }}
-        shell: bash
+      # If you use npm. Swap for yarn/pnpm as needed.
+      - name: Install dependencies
         run: |
-          echo "Run your project build here, e.g.:"
-          echo "  npm ci"
-          echo "  npm run build"
-          exit 1
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:${{ matrix.language }}"
+          if [ -f package-lock.json ]; then
+            n
