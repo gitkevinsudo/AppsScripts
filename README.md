@@ -16,7 +16,6 @@ All scripts use the same core design:
 | [QOTD Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/QOTD%20BOT)| Posts a random daily question from a Google Sheet | ✅ Active |
 | [Bible QOTD Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/ChristianQOTD) | Posts a random Bible-related question or verse | ✅ Active |
 | [Random Drawing Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/RandomDrawing)| Runs weighted raffles for community check-ins | ✅ Active |
-| [Check-In Bot](https://github.com/gitkevinsudo/AppsScripts/blob/main/dailycheckin) | Tracks daily user check-ins and streaks | BETA |
 | (Coming Soon) Suggestion Box | Collects member feedback | ⏳ Planned |
 
 ---
@@ -101,68 +100,6 @@ All scripts follow the same general setup process:
 
 ---
 
-## ✅ Check-In Bot (v1.0.0)
-
-**Purpose:** Daily community check-in system that tracks streaks, posts leaderboards, and celebrates consistency.
-
-**Version:** v1.0.0  
-**Date Created:** October 2025  
-**Author:** Runningpico
-
-### Sheet Tabs
-
-#### 1. `Users`
-| userId | username | currentStreak | bestStreak | lastCheckin |
-|--------|-----------|---------------|-------------|--------------|
-
-#### 2. `Checkins`
-| timestamp | date | userId | username | source |
-|------------|------|--------|-----------|--------|
-
-#### 3. `Settings`
-| key | value |
-|------|-------|
-| DISCORD_WEBHOOK | *your webhook URL* |
-| TIMEZONE | America/New_York |
-| WEBAPP_URL | *added after deployment* |
-| DAILY_POST_HOUR | 9 |
-| LEADERBOARD_DAY | SUN |
-
----
-
-### Script Overview
-| Function | Description |
-|-----------|-------------|
-| `postDailyCheckin()` | Posts daily check-in link |
-| `postWeeklyLeaderboard()` | Posts weekly leaderboard |
-| `postPersonalizedLinksInThread()` | Posts custom user links |
-| `doGet()` | Web App endpoint (handles user clicks) |
-| `recordCheckin()` | Core logic to update streaks |
-| `adminBackfillStreaksFromLog()` | Rebuilds streaks from history |
-| `htmlResponse()` | Returns a styled confirmation page (includes version footer) |
-
----
-
-### Setup Steps
-
-1. Create the three tabs (`Users`, `Checkins`, `Settings`)
-2. Paste the full `v1.0.0` Apps Script
-3. Set your **project timezone**
-4. Deploy as **Web App**
-   - Execute as: *Me*  
-   - Access: *Anyone with the link*
-5. Copy the **Web App URL** → paste into `Settings!WEBAPP_URL`
-6. Test by running `postDailyCheckin`
-7. Add triggers:
-   - `postDailyCheckin` → Daily at 9 AM
-   - `postWeeklyLeaderboard` → Weekly on Sunday at 10 AM
-   - *(optional)* `postPersonalizedLinksInThread` → Daily 9:05 AM
-
-**Footer:** Every page displays  
-> `Discord Check-In Bot — v1.0.0`
-
----
-
 ## 🧩 Future Bots (Ideas)
 | Idea | Description |
 |------|--------------|
@@ -173,17 +110,3 @@ All scripts follow the same general setup process:
 | 🧠 Memory Verse Game | Hides words progressively to test recall |
 
 ---
-
-## 🛠️ Shared Utilities
-
-Each script follows the same code pattern for webhooks:
-```js
-function postToDiscord(payload) {
-  const options = {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  };
-  UrlFetchApp.fetch(WEBHOOK_URL, options);
-}
