@@ -54,6 +54,9 @@ All scripts follow the same general setup process:
 **Trigger Setup:**
 - `postNextQOTD` → Time-driven → Every day 9 AM
 
+**Setup Script for Google Sheets **
+- BETA: Setups the QOTD google sheet before adding the QOTD Bot App Script [Setup Script](https://github.com/gitkevinsudo/AppsScripts/blob/main/QOTD_setup). **NOTE: you will have to copy and paste the QOTD App Script after you run this**
+
 ---
 
 ## 📖 Bible QOTD Bot
