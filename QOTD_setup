@@ -1,0 +1,49 @@
+/*****************************************************
+ * QOTD Setup
+ * Version: v1.1.0
+ * Author: Runningpico
+ * Purpose: Initialize the "Questions" tab with default columns
+ *           and remove the default "Sheet1" if present.
+ *****************************************************/
+
+function setupQuestionsSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheetName = "Questions";
+
+  // --- Create or reset the Questions sheet ---
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    Logger.log(`✅ Created new sheet: ${sheetName}`);
+  } else {
+    Logger.log(`ℹ️ Sheet "${sheetName}" already exists, resetting contents.`);
+    sheet.clear();
+  }
+
+  // --- Setup headers ---
+  sheet.getRange("A1").setValue("Questions");
+  sheet.getRange("B1").setValue("Posted");
+
+  const headerRange = sheet.getRange("A1:B1");
+  headerRange.setFontWeight("bold");
+  headerRange.setBackground("#f1f3f4");
+  headerRange.setHorizontalAlignment("center");
+
+  // --- Formatting ---
+  sheet.setColumnWidth(1, 400); // Questions
+  sheet.setColumnWidth(2, 100); // Posted
+  sheet.setFrozenRows(1);
+
+  // --- Delete default sheet if present ---
+  const defaultNames = ["Sheet1", "Sheet 1"];
+  for (const name of defaultNames) {
+    const oldSheet = ss.getSheetByName(name);
+    if (oldSheet && oldSheet.getSheetId() !== sheet.getSheetId()) {
+      ss.deleteSheet(oldSheet);
+      Logger.log(`🗑️ Deleted default sheet: ${name}`);
+    }
+  }
+
+  // --- Done! ---
+  SpreadsheetApp.getUi().alert("✅ Setup complete!\nThe 'Questions' sheet is ready to have questions added.");
+}
